@@ -1,9 +1,0 @@
-__pycache__/
-*.py[cod]
-*.pyc
-.venv/
-venv/
-.env
-*.log
-.vscode/
-.idea/
