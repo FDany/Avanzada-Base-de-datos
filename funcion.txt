@@ -1,0 +1,189 @@
+// Vista de la tabla (consulta) de productos
+
+CREATE OR REPLACE VIEW vw_productos AS
+SELECT 
+    p.productid::integer   AS productid,
+    p.productname::text    AS productname,
+    COALESCE(c.categoryname, 'Sin categoría')::text  AS categoryname,
+    COALESCE(s.companyname, 'Sin proveedor')::text   AS suppliername,
+    COALESCE(p.unitprice, 0)::numeric                AS unitprice,
+    COALESCE(p.unitsinstock, 0)::integer             AS unitsinstock
+FROM products p
+LEFT JOIN categories c ON p.categoryid = c.categoryid
+LEFT JOIN suppliers s  ON p.supplierid = s.supplierid;
+
+
+
+// Validaciones del ABM
+
+create or replace function fn_abm_productos(
+	p_accion text,
+	p_id text,
+	p_productname text default null,
+	p_supplierid text default null,
+	p_categoryid text default null,
+	p_quantityperunit text default null,
+	p_unitprice text default null,
+	p_unitsinstock text default null,
+	p_unitsonorder text default null,
+	p_reorderlevel text default null,
+	p_discontinued text default null
+)
+returns text as
+$$
+declare
+	v_accion text := Upper(trim(Coalesce(p_accion, '')));
+	v_productid int;
+	v_supplierid int;
+	v_categoryid int;
+	v_unitprice numeric;
+	v_unitsinstock int;
+	v_unitsonorder int;
+	v_reorderlevel int;
+	v_discontinued boolean;
+	
+begin
+	if v_accion not in('A','B','M') then
+		raise exception 'Accion invalida: %. Use A, M o B.',p_accion;
+	end if;
+	
+	if trim(coalesce(p_id,''))='' then
+		raise exception 'ID es un campo obligatorio para esta accion';
+	end if;
+
+	If Trim(p_id) !~ '^\d+$' then
+		Raise Exception 'El ID debe ser un número entero válido.';
+	End If;
+	
+	v_productid :=trim(p_id)::int;
+	
+	-- Baja ('B')
+	if v_accion = 'B' then
+		if not exists (select productid from products where productid = v_productid) then
+			raise exception 'No se encontro el producto % para eliminacion', v_productid;
+		end if;
+
+		If Exists (Select 1 from orderdetails Where productid = v_productid) then
+			Raise Exception 'No se puede eliminar el producto % porque tiene órdenes asociadas.', v_productid;
+		End If;
+			
+		delete from products where productid = v_productid;
+		
+		return 'Producto eliminado correctamente.';
+		
+	end if;
+
+	-- Validaciones comunes para Alta ('A') y Modificacion ("M")
+	if  trim(coalesce(p_productname,''))='' or trim(coalesce(p_supplierid,''))='' 
+		or trim(coalesce(p_categoryid,''))='' or trim(coalesce(p_unitprice,''))='' or trim(coalesce(p_unitsinstock,''))='' 
+		or trim(coalesce(p_unitsinstock,''))='' or trim(coalesce(p_unitsonorder,''))='' 
+		or trim(coalesce(p_reorderlevel,''))='' or trim(coalesce(p_discontinued,''))='' then
+			raise exception 'Todos los campos son obligatorios';
+	end if;
+
+	If Trim(p_supplierid) !~ '^\d+$' or Trim(p_categoryid) !~ '^\d+$'
+		or Trim(p_unitsinstock) !~ '^\d+$' or Trim(p_unitsonorder) !~ '^\d+$'
+		or Trim(p_reorderlevel) !~ '^\d+$' Then
+			Raise Exception 'Proveedor, categoría y cantidades deben ser números enteros válidos.';
+	End If;
+
+	If Trim(p_unitprice) !~ '^\d+(\.\d+)?$' Then
+		Raise Exception 'El precio unitario debe ser un número válido.';
+	End If;
+
+	if lower(trim(p_discontinued)) not in ('true', 'false', '1', '0', 't', 'f') then
+		raise exception 'El campo discontinuado debe ser true/false o 1/0.';
+	end if;
+	
+	v_supplierid 	:= trim(p_supplierid)::int;
+	v_categoryid 	:=trim(p_categoryid)::int;
+	v_unitprice		:= trim(p_unitprice)::numeric;
+	v_unitsinstock	:=trim(p_unitsinstock)::int;
+	v_unitsonorder	:=trim(p_unitsonorder)::int;
+	v_reorderlevel	:=trim(p_reorderlevel)::int;
+	v_discontinued	:=trim(p_discontinued)::boolean;
+	
+	if v_unitprice <= 0 then
+		raise exception 'El precio no puede ser cero ni negativo';
+	end if;
+	
+	if v_unitsinstock < 0 or v_unitsonorder<0 or v_reorderlevel <0 then
+		raise exception 'Las cantidades no pueder ser negativas';
+	end if;
+
+	if not exists (select supplierid from suppliers where supplierid = v_supplierid) then
+		raise exception 'Este proveedor no existe';
+	end if;
+	
+	if not exists (select categoryid from categories where categoryid = v_categoryid) then
+		raise exception 'Esta categoria no existe';
+	end if;
+
+	-- Alta ('A')
+	if v_accion ='A' then
+		
+		if exists (select productid from products where productid = v_productid) then
+			raise exception 'Ya existe un producto asociado a esta ID: %',v_productid;
+		end if;
+		
+		if exists (select productname from products where trim(productname) ilike trim(p_productname)) then
+			raise exception 'Ya existe un producto con este nombre: %',p_productname;
+		end if;
+		
+		insert into products(
+			productid,
+			productname,
+			supplierid,
+			categoryid,
+			quantityperunit,
+			unitprice,
+			unitsinstock,
+			unitsonorder,
+			reorderlevel,
+			discontinued
+		)
+		values(
+			v_productid,
+			trim(p_productname),
+			v_supplierid,
+			v_categoryid,
+			trim(p_quantityperunit),
+			v_unitprice,
+			v_unitsinstock,
+			v_unitsonorder,
+			v_reorderlevel,
+			v_discontinued
+		);
+		
+		return 'Producto creado correctamente';
+	end if;
+	
+	-- Modificacion ('M')
+	if v_accion = 'M' then
+		if not exists (select productid from products where productid = v_productid) then
+			raise exception 'No existe un producto asociado a esta ID: %',v_productid;
+		end if;
+	
+		if exists (select productid from products where trim(productname) ilike trim(p_productname) and productid<> v_productid) then
+			raise exception 'Ya existe un producto con este nombre: %',p_productname;
+		end if;
+		
+		Update products 
+		set 
+			productname 	= trim(p_productname), 
+			supplierid 		= v_supplierid, 
+			categoryid 		= v_categoryid,
+			quantityperunit = trim(p_quantityperunit), 
+			unitprice 		= v_unitprice, 
+			unitsinstock 	= v_unitsinstock,
+			unitsonorder 	= v_unitsonorder, 
+			reorderlevel 	= v_reorderlevel, 
+			discontinued 	= v_discontinued
+		where productid = v_productid;
+		
+		return 'Producto actualizado correctamente';
+		
+	end if;
+end;
+$$
+language plpgsql;
