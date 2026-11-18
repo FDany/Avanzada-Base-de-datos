@@ -143,7 +143,7 @@ class VentanaConsultaProductos(tk.Tk):
         ]
 
         for col, texto, ancho, alineacion in encabezados:
-            self.grilla.heading(col, text=texto)
+            self.grilla.heading(col, text=texto, anchor=alineacion)
             self.grilla.column(col, width=ancho, anchor=alineacion)
 
         scroll = ttk.Scrollbar(frame_tabla, orient="vertical", command=self.grilla.yview)
